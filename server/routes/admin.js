@@ -17,7 +17,13 @@ const storage = multer.diskStorage({
     cb(null, Date.now() + ext);
   }
 });
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
+
+// Helper to build full photo URL
+function getFullPhotoUrl(req, filename) {
+  if (!filename) return null;
+  return `${req.protocol}://${req.get('host')}/uploads/${filename}`;
+}
 
 // Test route to confirm route is connected
 router.get('/ping', (req, res) => {
@@ -59,7 +65,6 @@ router.post('/events', upload.single('photo'), async (req, res) => {
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
-  // photo filename from multer
   const photo = req.file ? req.file.filename : null;
 
   try {
@@ -70,13 +75,18 @@ router.post('/events', upload.single('photo'), async (req, res) => {
       venue,
       date,
       time,
-      isFree: isFree === 'true' || isFree === true, // handle string or boolean
+      isFree: isFree === 'true' || isFree === true,
       price: isFree === 'true' || isFree === true ? 0 : price,
-      attendees: [] // Initialize empty attendees array
+      attendees: []
     });
 
     await newEvent.save();
-    res.status(201).json({ message: 'Event created successfully', event: newEvent });
+
+    // Return event with full photo URL
+    const eventObj = newEvent.toObject();
+    eventObj.photoUrl = getFullPhotoUrl(req, eventObj.photo);
+
+    res.status(201).json({ message: 'Event created successfully', event: eventObj });
   } catch (err) {
     console.error('Error creating event:', err);
     res.status(500).json({ message: 'Server error' });
@@ -88,14 +98,12 @@ router.get('/events', async (req, res) => {
   try {
     const events = await Event.find().lean();
 
-    // Add full photo URL
-    const host = req.get('host');
-    const protocol = req.protocol;
-    events.forEach(event => {
-      event.photoUrl = event.photo ? `${protocol}://${host}/uploads/${event.photo}` : null;
-    });
+    const eventsWithPhotoUrl = events.map(event => ({
+      ...event,
+      photoUrl: getFullPhotoUrl(req, event.photo)
+    }));
 
-    res.json(events);
+    res.json(eventsWithPhotoUrl);
   } catch (err) {
     console.error('Error fetching events:', err);
     res.status(500).json({ message: 'Server error' });
@@ -118,12 +126,10 @@ router.post('/events/signup', async (req, res) => {
     const event = await Event.findById(eventId);
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
-    // Check if student already signed up
     if (event.attendees.some(att => att.toString() === studentId)) {
       return res.status(400).json({ message: 'Student already signed up for this event' });
     }
 
-    // Add student to attendees
     event.attendees.push(studentId);
     await event.save();
 
